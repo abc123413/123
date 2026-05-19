@@ -1,0 +1,12 @@
+.env
+.idea/
+__pycache__/
+*.pyc
+
+data/
+logs/
+models/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
