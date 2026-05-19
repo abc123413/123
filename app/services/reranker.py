@@ -8,7 +8,7 @@ from app.models.document import SearchResult
 
 
 class RerankerService:
-    """使用本地或远程 Cross-Encoder 模型对召回结果做精排。"""
+    """Rerank retrieved chunks with a local cross-encoder model."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -17,11 +17,15 @@ class RerankerService:
         self._torch_device = self._resolve_torch_device("cpu")
 
     def rerank(self, query: str, results: List[SearchResult], use_rerank: bool | None = None) -> List[SearchResult]:
-        """根据开关决定是否执行重排序。"""
-
         enabled = self.settings.rerank_enabled if use_rerank is None else use_rerank
         if not enabled or not results:
             return results[: self.settings.rerank_final_k]
+
+        if self.settings.demo_mode:
+            candidates = results[: self.settings.rerank_final_k]
+            for item in candidates:
+                item.rerank_score = item.score
+            return candidates
 
         tokenizer, model = self._get_local_components()
         candidates = results[: self.settings.rerank_initial_k]

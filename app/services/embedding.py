@@ -4,6 +4,7 @@ import os
 from typing import List
 
 import httpx
+import numpy as np
 import torch
 from tenacity import retry, stop_after_attempt, wait_exponential
 from transformers import AutoModel, AutoTokenizer
@@ -61,9 +62,22 @@ class EmbeddingService:
         return result[0] if result else []
 
     def _embed_batch(self, texts: List[str]) -> List[List[float]]:
+        if self.settings.demo_mode:
+            return [self._embed_text_demo(text) for text in texts]
         if self.settings.embedding_provider == "local":
             return self._embed_batch_local(texts)
         return self._embed_batch_openai(texts)
+
+    def _embed_text_demo(self, text: str) -> List[float]:
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        seed = int.from_bytes(digest[:8], "big", signed=False)
+        rng = np.random.default_rng(seed)
+        vector = rng.normal(size=self.settings.embedding_dimension)
+        if self.settings.embedding_normalize:
+            norm = np.linalg.norm(vector)
+            if norm > 0:
+                vector = vector / norm
+        return vector.astype(float).tolist()
 
     def _embed_batch_local(self, texts: List[str]) -> List[List[float]]:
         tokenizer, model = self._get_local_components()

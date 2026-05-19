@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """统一管理应用配置，支持从 .env 文件加载。"""
+    """Centralized application configuration loaded from .env."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
     app_debug: bool = Field(default=False, alias="APP_DEBUG")
+    demo_mode: bool = Field(default=False, alias="DEMO_MODE")
     api_prefix: str = Field(default="/api/v1", alias="API_PREFIX")
     cors_origins: Annotated[List[str], NoDecode] = Field(
         default_factory=lambda: ["*"],
@@ -87,6 +88,7 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=2048, alias="LLM_MAX_TOKENS")
     llm_stream: bool = Field(default=True, alias="LLM_STREAM")
+    demo_answer_prefix: str = Field(default="[DEMO]", alias="DEMO_ANSWER_PREFIX")
     prompt_system_message: str = Field(
         default="你是企业级知识库问答助手，请严格基于检索到的上下文回答问题；如果上下文不足，明确说明不知道，不要编造。",
         alias="PROMPT_SYSTEM_MESSAGE",
@@ -115,18 +117,20 @@ class Settings(BaseSettings):
     def normalize_embedding_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
         if normalized not in {"local", "openai"}:
-            raise ValueError("EMBEDDING_PROVIDER 仅支持 local 或 openai")
+            raise ValueError("EMBEDDING_PROVIDER only supports local or openai")
         return normalized
 
     @model_validator(mode="after")
     def validate_embedding_config(self) -> "Settings":
+        if self.demo_mode:
+            return self
         if self.embedding_provider == "openai" and not self.embedding_api_key:
-            raise ValueError("当 EMBEDDING_PROVIDER=openai 时，必须配置 EMBEDDING_API_KEY")
+            raise ValueError("EMBEDDING_API_KEY is required when EMBEDDING_PROVIDER=openai")
         return self
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """返回单例配置对象，避免重复解析环境变量。"""
+    """Return a cached settings instance."""
 
     return Settings()
