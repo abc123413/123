@@ -34,36 +34,7 @@ project/
 └── README.md
 ```
 
-## 本仓库不上传的内容
 
-以下内容不建议上传到 GitHub：
-
-- `.env`
-- `data/`
-- `logs/`
-- `models/`
-- `.idea/`
-- `__pycache__/`
-
-原因：
-
-- `.env` 可能包含真实密钥
-- `data/`、`logs/`、`models/` 属于本地运行数据或大文件
-- `models/` 体积大，不适合普通 Git 仓库
-
-## 上传后别人能否运行
-
-可以，但需要自行准备：
-
-1. Python 依赖
-2. `.env`
-3. 本地模型目录
-4. DeepSeek API Key
-
-也就是说：
-
-- 代码仓库上传的是“可运行工程代码”
-- 模型文件不上传，由使用者自行下载到本地
 
 ## 快速开始
 
@@ -264,26 +235,6 @@ cross-encoder/ms-marco-MiniLM-L-12-v2
 - 上下文噪声过滤
 - 结构化答案字段
 
-## 发布到 GitHub 前的建议
-
-建议保留：
-
-- `app/`
-- `main.py`
-- `.env.example`
-- `README.md`
-- `requirements.txt`
-- `docker-compose.yml`
-- `Dockerfile`
-
-建议忽略：
-
-- `.env`
-- `data/`
-- `logs/`
-- `models/`
-- `.idea/`
-- `__pycache__/`
 
 ## 注意事项
 
