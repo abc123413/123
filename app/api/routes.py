@@ -6,6 +6,11 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.config import Settings, get_settings
+from app.evaluation_models import (
+    RagasEvaluationResponse,
+    RagasEvaluationSampleRequest,
+    RagasQuickEvaluationRequest,
+)
 from app.models.document import DocumentRecord, QueryResponseData
 from app.models.request import (
     DeleteResponse,
@@ -19,6 +24,7 @@ from app.services.document_processor import DocumentProcessor
 from app.services.embedding import EmbeddingService
 from app.services.hybrid_search import HybridSearchService
 from app.services.llm_service import LLMService
+from app.services.ragas_evaluator import RagasEvaluationService
 from app.services.query_rewriter import QueryRewriterService
 from app.services.reranker import RerankerService
 from app.services.vector_store import VectorStoreService
@@ -62,6 +68,18 @@ def get_reranker(settings: Settings = Depends(get_settings)) -> RerankerService:
 
 def get_llm_service(settings: Settings = Depends(get_settings)) -> LLMService:
     return LLMService(settings)
+
+
+def get_ragas_evaluator(
+    settings: Settings = Depends(get_settings),
+    hybrid_search: HybridSearchService = Depends(get_hybrid_search),
+    reranker: RerankerService = Depends(get_reranker),
+    llm_service: LLMService = Depends(get_llm_service),
+    vector_store: VectorStoreService = Depends(get_vector_store),
+) -> RagasEvaluationService:
+    if not settings.llm_api_key:
+        raise HTTPException(status_code=400, detail="LLM_API_KEY is required for RAGAS evaluation")
+    return RagasEvaluationService(settings, hybrid_search, reranker, llm_service, vector_store)
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -178,6 +196,42 @@ async def query_documents(
     except Exception as exc:
         logger.exception("Query failed")
         raise HTTPException(status_code=500, detail=f"Query failed: {exc}") from exc
+
+
+@router.post("/evaluations/ragas", response_model=RagasEvaluationResponse)
+async def evaluate_ragas(
+    samples: list[RagasEvaluationSampleRequest],
+    ragas_evaluator: RagasEvaluationService = Depends(get_ragas_evaluator),
+) -> RagasEvaluationResponse:
+    """Evaluate the current RAG pipeline with Ragas metrics."""
+
+    if not samples:
+        raise HTTPException(status_code=400, detail="samples is required")
+    try:
+        return RagasEvaluationResponse(data=await ragas_evaluator.evaluate_samples(samples))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("RAGAS evaluation failed")
+        raise HTTPException(status_code=500, detail=f"RAGAS evaluation failed: {exc}") from exc
+
+
+@router.post("/evaluations/ragas/quick", response_model=RagasEvaluationResponse)
+async def quick_evaluate_ragas(
+    request: RagasQuickEvaluationRequest,
+    ragas_evaluator: RagasEvaluationService = Depends(get_ragas_evaluator),
+) -> RagasEvaluationResponse:
+    """Quick heuristic RAGAS benchmark from the indexed documents."""
+
+    try:
+        return RagasEvaluationResponse(
+            data=await ragas_evaluator.quick_evaluate(request.sample_count, request.document_ids)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Quick RAGAS evaluation failed")
+        raise HTTPException(status_code=500, detail=f"Quick RAGAS evaluation failed: {exc}") from exc
 
 
 @router.get("/documents", response_model=DocumentsResponse)

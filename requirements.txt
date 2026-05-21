@@ -20,3 +20,5 @@ httpx
 tenacity
 orjson
 python-multipart
+ragas
+openai

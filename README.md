@@ -182,6 +182,31 @@
 
 `DELETE /api/v1/documents`
 
+### 7. RAGAS 评测
+
+`POST /api/v1/evaluations/ragas`
+
+请求示例：
+
+```json
+[
+  {
+    "query": "这份文档的核心内容是什么？",
+    "reference": "参考答案可选",
+    "document_ids": ["your-document-id"],
+    "top_k": 6,
+    "use_rerank": true
+  }
+]
+```
+
+快速模式：
+
+`POST /api/v1/evaluations/ragas/quick`
+
+会基于当前已索引文档自动生成一组轻量评测样本，适合先看一个粗分。
+正式评测请先导入真实业务文档，否则分数只代表链路验收。
+
 ## 环境要求
 
 - Python `3.11`
