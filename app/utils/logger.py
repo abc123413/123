@@ -7,7 +7,7 @@ from app.config import get_settings
 
 
 def setup_logger() -> None:
-    """初始化统一日志配置。"""
+    """Initialize application, error, and access logs."""
 
     settings = get_settings()
     os.makedirs(settings.log_dir, exist_ok=True)
@@ -27,6 +27,26 @@ def setup_logger() -> None:
         retention="7 days",
         enqueue=True,
         encoding="utf-8",
+    )
+    logger.add(
+        os.path.join(settings.log_dir, "error.log"),
+        level="ERROR",
+        rotation="10 MB",
+        retention="14 days",
+        enqueue=True,
+        encoding="utf-8",
+        backtrace=True,
+        diagnose=False,
+    )
+    logger.add(
+        os.path.join(settings.log_dir, "access.log"),
+        level="INFO",
+        rotation="10 MB",
+        retention="7 days",
+        enqueue=True,
+        encoding="utf-8",
+        filter=lambda record: record["extra"].get("access_log", False),
+        format="{time:YYYY-MM-DD HH:mm:ss} | {message}",
     )
 
 

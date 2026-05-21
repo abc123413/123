@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     """Centralized application configuration loaded from .env."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", ".secrets.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -36,18 +36,21 @@ class Settings(BaseSettings):
 
     max_file_size_mb: int = Field(default=50, alias="MAX_FILE_SIZE_MB")
     allowed_extensions: Annotated[List[str], NoDecode] = Field(
-        default_factory=lambda: [".pdf", ".docx", ".txt", ".md", ".html"],
+        default_factory=lambda: [".pdf", ".docx", ".txt", ".md", ".html", ".png", ".jpg", ".jpeg"],
         alias="ALLOWED_EXTENSIONS",
     )
     enable_ocr: bool = Field(default=False, alias="ENABLE_OCR")
     ocr_language: str = Field(default="chi_sim+eng", alias="OCR_LANGUAGE")
+    tesseract_cmd: str = Field(default="tesseract", alias="TESSERACT_CMD")
 
     chunk_strategy: str = Field(default="semantic", alias="CHUNK_STRATEGY")
     chunk_size: int = Field(default=800, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=150, alias="CHUNK_OVERLAP")
     chunk_min_size: int = Field(default=200, alias="CHUNK_MIN_SIZE")
     preserve_sentence_boundary: bool = Field(default=True, alias="PRESERVE_SENTENCE_BOUNDARY")
+    chunk_title_boost: bool = Field(default=True, alias="CHUNK_TITLE_BOOST")
 
+    vector_store_provider: str = Field(default="chroma", alias="VECTOR_STORE_PROVIDER")
     chroma_persist_dir: str = Field(default="data/chroma", alias="CHROMA_PERSIST_DIR")
     collection_name: str = Field(default="enterprise_docs", alias="COLLECTION_NAME")
 
@@ -62,8 +65,20 @@ class Settings(BaseSettings):
     embedding_normalize: bool = Field(default=True, alias="EMBEDDING_NORMALIZE")
     embedding_cache_enabled: bool = Field(default=True, alias="EMBEDDING_CACHE_ENABLED")
     embedding_cache_dir: str = Field(default="data/cache/embeddings", alias="EMBEDDING_CACHE_DIR")
+    vlm_enabled: bool = Field(default=False, alias="VLM_ENABLED")
+    vlm_api_base: str = Field(default="https://api.deepseek.com/v1", alias="VLM_API_BASE")
+    vlm_api_key: str = Field(default="", alias="VLM_API_KEY")
+    vlm_model: str = Field(default="deepseek-vl2", alias="VLM_MODEL")
+    vlm_timeout: int = Field(default=120, alias="VLM_TIMEOUT")
+    vlm_max_images_per_document: int = Field(default=3, alias="VLM_MAX_IMAGES_PER_DOCUMENT")
+    vlm_prompt: str = Field(
+        default="请提取这张文档图片中的关键信息、标题、表格要点和图示语义，输出简洁文本。",
+        alias="VLM_PROMPT",
+    )
 
     retrieval_top_k: int = Field(default=10, alias="RETRIEVAL_TOP_K")
+    document_candidate_top_k: int = Field(default=5, alias="DOCUMENT_CANDIDATE_TOP_K")
+    document_scope_trigger_count: int = Field(default=3, alias="DOCUMENT_SCOPE_TRIGGER_COUNT")
     hybrid_search_enabled: bool = Field(default=True, alias="HYBRID_SEARCH_ENABLED")
     vector_top_k: int = Field(default=20, alias="VECTOR_TOP_K")
     bm25_top_k: int = Field(default=20, alias="BM25_TOP_K")
@@ -71,6 +86,14 @@ class Settings(BaseSettings):
     bm25_weight: float = Field(default=0.3, alias="BM25_WEIGHT")
     fusion_mode: str = Field(default="rrf", alias="FUSION_MODE")
     rrf_k: int = Field(default=60, alias="RRF_K")
+    query_rewrite_enabled: bool = Field(default=True, alias="QUERY_REWRITE_ENABLED")
+    query_rewrite_max_queries: int = Field(default=3, alias="QUERY_REWRITE_MAX_QUERIES")
+    low_confidence_threshold: float = Field(default=0.25, alias="LOW_CONFIDENCE_THRESHOLD")
+    low_confidence_gap_threshold: float = Field(default=0.03, alias="LOW_CONFIDENCE_GAP_THRESHOLD")
+    second_pass_enabled: bool = Field(default=True, alias="SECOND_PASS_ENABLED")
+    second_pass_top_k: int = Field(default=30, alias="SECOND_PASS_TOP_K")
+    neighbor_expand_enabled: bool = Field(default=True, alias="NEIGHBOR_EXPAND_ENABLED")
+    neighbor_expand_window: int = Field(default=1, alias="NEIGHBOR_EXPAND_WINDOW")
 
     rerank_enabled: bool = Field(default=True, alias="RERANK_ENABLED")
     rerank_initial_k: int = Field(default=50, alias="RERANK_INITIAL_K")
@@ -118,6 +141,14 @@ class Settings(BaseSettings):
         normalized = value.strip().lower()
         if normalized not in {"local", "openai"}:
             raise ValueError("EMBEDDING_PROVIDER only supports local or openai")
+        return normalized
+
+    @field_validator("vector_store_provider")
+    @classmethod
+    def normalize_vector_store_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"chroma"}:
+            raise ValueError("VECTOR_STORE_PROVIDER only supports chroma")
         return normalized
 
     @model_validator(mode="after")

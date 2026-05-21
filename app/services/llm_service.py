@@ -1,8 +1,10 @@
 import json
 import re
+import time
 from typing import AsyncGenerator, List
 
 import httpx
+from loguru import logger
 
 from app.config import Settings
 from app.models.document import CitationItem, SearchResult
@@ -31,16 +33,31 @@ class LLMService:
     def build_prompt(self, query: str, results: List[SearchResult]) -> str:
         contexts = []
         selected_results = self._select_context_results(results)
+        image_query = self._is_image_query(query)
+
         for index, result in enumerate(selected_results, start=1):
             metadata = result.metadata or {}
             compressed_content = self._compress_context(result.content)
-            contexts.append(f"[{index}] 来源文档: {metadata.get('filename', 'unknown')}\n{compressed_content}")
+            modality = metadata.get("modality", "text")
+            contexts.append(
+                f"[{index}] 来源文档: {metadata.get('filename', 'unknown')} | 模态: {modality}\n{compressed_content}"
+            )
 
         context_text = "\n\n".join(contexts) if contexts else "无可用上下文"
+        extra_instruction = ""
+        if image_query:
+            extra_instruction = (
+                "补充要求：这是一个图片相关问题。"
+                "如果上下文中存在模态为 vlm 的片段，优先总结这些视觉语义；"
+                "如果只有 ocr 片段，则只能回答图片中可见文字，不要把 OCR 文字误写成完整画面理解；"
+                "如果 vlm 和 ocr 都不足，再明确写依据不足。\n\n"
+            )
+
         prompt = (
             f"{self.settings.prompt_system_message}\n\n"
             f"检索上下文如下：\n{context_text}\n\n"
             f"用户问题：{query}\n\n"
+            f"{extra_instruction}"
             "请直接输出 JSON，不要输出 Markdown，不要输出代码块，不要输出 JSON 之外的解释。\n"
             'JSON 结构必须为：{"conclusion":"", "key_points":[""], "citations":["[1]","[2]"]}\n'
             "字段要求：\n"
@@ -51,13 +68,22 @@ class LLMService:
             "- 只能依据上面的检索上下文回答，不要补充上下文之外的知识。\n"
             "- 如果信息不足，明确写“依据不足”。\n"
             "- 引用编号只能使用上面出现过的片段编号。\n"
-            "- 不要输出“我认为”“可能”“推测”等措辞。"
+            "- 不要输出“我认为”“可能”“推测”等措辞。\n"
         )
         return prompt
 
     def _select_context_results(self, results: List[SearchResult]) -> List[SearchResult]:
+        ordered_results = sorted(
+            results,
+            key=lambda item: (
+                1 if (item.metadata or {}).get("modality") == "vlm" else 0,
+                1 if (item.metadata or {}).get("modality") == "ocr" else 0,
+                item.rerank_score if item.rerank_score is not None else item.score,
+            ),
+            reverse=True,
+        )
         selected: List[SearchResult] = []
-        for result in results:
+        for result in ordered_results:
             if len(selected) >= self.settings.context_max_chunks:
                 break
             if self._is_low_signal_chunk(result.content):
@@ -66,7 +92,7 @@ class LLMService:
 
         if selected:
             return selected
-        return results[: self.settings.context_max_chunks]
+        return ordered_results[: self.settings.context_max_chunks]
 
     def _compress_context(self, content: str) -> str:
         text = content.replace("\r\n", "\n").replace("\r", "\n")
@@ -75,7 +101,6 @@ class LLMService:
 
         segments = [segment.strip() for segment in re.split(r"\n\n+", text) if segment.strip()]
         refined_segments: List[str] = []
-
         for segment in segments:
             normalized = " ".join(segment.split())
             if not normalized:
@@ -86,11 +111,12 @@ class LLMService:
 
         if not refined_segments:
             refined_segments = [" ".join(text.split())]
-
         return "\n".join(refined_segments[:4]).strip()
 
     def _is_low_signal_chunk(self, content: str) -> bool:
         normalized = " ".join(content.split())
+        if ("[VLM]" in normalized or "[VLM_IMAGE_" in normalized) and len(normalized) >= 20:
+            return False
         if len(normalized) < 40:
             return True
 
@@ -101,14 +127,17 @@ class LLMService:
         )
         if keyword_hits >= 2:
             return False
-
         return self._is_directory_like(normalized)
 
     def _is_directory_like(self, text: str) -> bool:
-        labels = ["目录", "版本", "适用", "日期", "核心定义", "核心优势", "整体架构流程", "主流", "简易搭建流程"]
+        labels = ["目录", "版本", "适用", "日期", "核心定义", "核心优势", "整体架构流程", "主流", "搭建流程"]
         hit_count = sum(1 for label in labels if label in text)
         numbered_items = len(re.findall(r"\b\d+\.", text))
         return hit_count >= 4 and numbered_items <= 3
+
+    def _is_image_query(self, query: str) -> bool:
+        keywords = ["图片", "图", "截图", "界面", "图表", "海报", "表格", "照片", "画面", "视觉"]
+        return any(keyword in query for keyword in keywords)
 
     def parse_structured_answer(self, raw_answer: str, results: List[SearchResult]) -> dict:
         parsed = self._try_parse_json(raw_answer)
@@ -116,20 +145,11 @@ class LLMService:
             parsed = self._fallback_parse_text(raw_answer)
 
         conclusion = str(parsed.get("conclusion", "")).strip()
-        key_points = [
-            str(item).strip()
-            for item in parsed.get("key_points", [])
-            if str(item).strip()
-        ]
-        citation_refs = [
-            str(item).strip()
-            for item in parsed.get("citations", [])
-            if str(item).strip()
-        ]
+        key_points = [str(item).strip() for item in parsed.get("key_points", []) if str(item).strip()]
+        citation_refs = [str(item).strip() for item in parsed.get("citations", []) if str(item).strip()]
 
         citations = self._build_citations(citation_refs, results)
         answer = self._compose_answer(conclusion, key_points, citations)
-
         return {
             "answer": answer,
             "conclusion": conclusion,
@@ -147,16 +167,15 @@ class LLMService:
             if isinstance(data, dict):
                 return data
         except Exception:
-            pass
+            return None
         return None
 
     def _fallback_parse_text(self, raw_answer: str) -> dict:
         conclusion = raw_answer.strip()
-        key_points = []
         citation_refs = re.findall(r"\[\d+\]", raw_answer)
         return {
             "conclusion": conclusion,
-            "key_points": key_points,
+            "key_points": [],
             "citations": citation_refs,
         }
 
@@ -173,17 +192,26 @@ class LLMService:
                 citations.append(citation_map[ref])
 
         if citations:
-            return citations
+            return self._deduplicate_citations(citations)
+        return self._deduplicate_citations(list(citation_map.values())[:2])
 
-        return list(citation_map.values())[:2]
+    def _deduplicate_citations(self, citations: List[CitationItem]) -> List[CitationItem]:
+        deduplicated: List[CitationItem] = []
+        seen = set()
+        for item in citations:
+            key = (item.ref, item.filename)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduplicated.append(item)
+        return deduplicated
 
     def _compose_answer(self, conclusion: str, key_points: List[str], citations: List[CitationItem]) -> str:
         parts: List[str] = []
         if conclusion:
             parts.append(f"结论：{conclusion}")
         if key_points:
-            bullet_text = "\n".join(f"- {item}" for item in key_points)
-            parts.append(f"关键要点：\n{bullet_text}")
+            parts.append("关键要点：\n" + "\n".join(f"- {item}" for item in key_points))
         if citations:
             refs = "".join(item.ref for item in citations)
             parts.append(f"依据：{refs}")
@@ -194,12 +222,14 @@ class LLMService:
         conclusion = self._build_demo_conclusion(query, selected_results)
         key_points = self._build_demo_key_points(selected_results)
         citations = [f"[{index}]" for index, _ in enumerate(selected_results[:2], start=1)]
-        payload = {
-            "conclusion": conclusion,
-            "key_points": key_points,
-            "citations": citations,
-        }
-        return json.dumps(payload, ensure_ascii=False)
+        return json.dumps(
+            {
+                "conclusion": conclusion,
+                "key_points": key_points,
+                "citations": citations,
+            },
+            ensure_ascii=False,
+        )
 
     def _build_demo_conclusion(self, query: str, results: List[SearchResult]) -> str:
         if not results:
@@ -210,10 +240,9 @@ class LLMService:
             filename = (item.metadata or {}).get("filename", "unknown")
             if filename not in filenames:
                 filenames.append(filename)
-
         return (
-            f"{self.settings.demo_answer_prefix} 系统已成功完成检索与回答链路演示。"
-            f" 当前问题是“{query}”，答案基于已检索到的文档片段生成，主要来源于：{', '.join(filenames[:3])}。"
+            f"{self.settings.demo_answer_prefix} 系统已完成检索与回答链路演示。"
+            f" 当前问题为“{query}”，答案基于检索到的文档片段生成，主要来源于：{', '.join(filenames[:3])}。"
         )
 
     def _build_demo_key_points(self, results: List[SearchResult]) -> List[str]:
@@ -253,11 +282,18 @@ class LLMService:
             "Content-Type": "application/json",
         }
 
+        started_at = time.perf_counter()
         async with httpx.AsyncClient(timeout=self.settings.llm_timeout) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
+            try:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+            except Exception:
+                logger.exception("LLM request failed | model={} url={}", self.settings.llm_model, url)
+                raise
 
+        duration_ms = (time.perf_counter() - started_at) * 1000
+        logger.info("LLM request succeeded | model={} duration_ms={:.2f}", self.settings.llm_model, duration_ms)
         return data["choices"][0]["message"]["content"]
 
     async def stream_answer(self, prompt: str) -> AsyncGenerator[str, None]:

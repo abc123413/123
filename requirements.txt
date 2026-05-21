@@ -10,6 +10,9 @@ rank-bm25
 numpy
 scikit-learn
 pypdf
+PyMuPDF
+Pillow
+pytesseract
 python-docx
 beautifulsoup4
 regex

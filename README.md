@@ -1,150 +1,121 @@
 # Enterprise RAG
 
-基于 FastAPI、Chroma、本地 Embedding、本地 Reranker 和 DeepSeek 的企业级 RAG 检索增强生成系统。
+基于 `FastAPI + Chroma + BM25 + Local Embedding + Local Reranker + DeepSeek` 的个人/企业知识库问答系统，支持 OCR、多格式文档解析、混合检索、Rerank 和结构化回答输出。
 
-## 项目亮点
+## 功能概览
 
-- 将分散在 PDF、Word、Markdown、网页中的知识整理为可检索、可问答的统一知识库
-- 支持 `PDF`、`DOCX`、`TXT`、`MD`、`HTML` 文档上传、解析、清洗和切块
-- 实现 `Chroma + BM25` 混合检索，并支持 `RRF` / `weighted` 融合
-- 支持本地 `Reranker` 精排，提升检索结果相关性
-- 支持结构化问答输出：`answer`、`conclusion`、`key_points`、`citations`
-- 支持文件哈希去重、检索结果去重、上下文压缩
-- 支持 `Demo 模式`，不依赖真实大模型 API 和本地模型也可完成系统演示
+- 支持 `PDF`、`DOCX`、`TXT`、`MD`、`HTML`、`PNG`、`JPG`、`JPEG` 上传
+- 支持文档清洗、分块、向量化、持久化索引
+- 支持 `Chroma + BM25` 混合检索
+- 支持 `RRF` / `weighted` 两种融合策略
+- 支持本地 `Cross-Encoder Reranker`
+- 支持 `OCR` 提取图片和扫描文档文本
+- 支持 `VLM` 补充图片/图表语义信息
+- 支持查询改写、低置信度二次检索、邻居 chunk 扩展
+- 支持结构化回答：`answer`、`conclusion`、`key_points`、`citations`
+- 支持文件 Hash 去重、结果去重、上下文压缩
+- 支持 `Demo Mode`，没有真实模型时也能演示完整链路
 
-## 技术亮点
+## 当前技术栈
 
-- 独立实现企业级 RAG 知识库问答系统，技术栈涵盖 `FastAPI + Chroma + BM25 + Local Embedding + Local Reranker + DeepSeek`
-- 构建混合检索链路，将向量检索与 BM25 词法检索结合，提升召回覆盖率与检索稳定性
-- 实现本地化 Embedding 与本地化 Reranker，支持离线部署，降低外部模型依赖
-- 构建文档处理流水线，支持多格式解析、文本清洗、智能切块和索引入库
-- 实现文档去重、结果去重、上下文压缩和结构化回答输出，增强可追溯性与前端集成能力
+- API: `FastAPI`
+- 向量库: `Chroma`
+- 稀疏检索: `BM25`
+- 向量模型: 本地 `bge-small-zh-v1.5` 或 OpenAI-compatible Embedding API
+- 重排模型: 本地 `ms-marco-MiniLM-L-12-v2`
+- 大模型: `DeepSeek` 或兼容 OpenAI Chat Completions 的接口
+- OCR: `Tesseract OCR + pytesseract`
+- PDF 页图处理: `PyMuPDF`
 
-## 检索策略
+## 检索链路
 
-当前项目实现的是混合检索，不是单一向量检索：
+当前实现的检索链路不是单一向量检索，而是：
 
-- 向量检索：基于 Embedding 相似度在 Chroma 中召回
-- BM25 检索：基于关键词匹配做词法召回
-- 融合方式：
-  - 默认 `RRF`
-  - 可切换 `weighted`
-- 融合后再经过本地 `Reranker` 精排
+1. 查询改写
+2. 多 query 混合召回
+3. 向量检索
+4. BM25 检索
+5. `RRF` / `weighted` 融合
+6. 低置信度二次检索
+7. 邻居 chunk 扩展
+8. 本地 Reranker 精排
+9. 上下文压缩
+10. 结构化回答生成
 
-你的项目可归类为：
+你可以把这个项目归类为：
 
 - `Hybrid Search`
 - `Retrieval + Rerank`
+- `OCR/VLM Enhanced RAG`
 - `Structured RAG Response`
 
-## 返回结构
+## OCR 与 VLM
 
-`POST /api/v1/query` 返回的 `data` 中包含：
+### OCR
 
-- `answer`：兼容文本展示
-- `conclusion`：结构化结论
-- `key_points`：结构化要点
-- `citations`：引用片段来源
-- `results`：检索结果原始数据
-- `prompt`：实际发送给模型的上下文提示词
+当 `ENABLE_OCR=true` 时：
 
-## Demo 模式
+- 图片文档会直接走 OCR
+- PDF 每页会渲染成图片后做 OCR
+- DOCX 中的内嵌图片也会尝试 OCR
 
-### 作用
+当前默认通过下面配置指定 Tesseract：
 
-`Demo 模式` 用于解决以下问题：
+```env
+TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+```
 
-1. HR 或面试官没有本地模型
-2. HR 或面试官没有真实 `DeepSeek API Key`
+### VLM
 
-开启后，系统仍然可以：
+当 `VLM_ENABLED=true` 且配置了 `VLM_API_KEY` 时：
 
-- 启动接口服务
-- 上传文档
-- 文档切块
-- 建立演示索引
-- 执行检索
-- 返回结构化问答结果
+- 图片文档可补充图表、版面、标题、示意图等语义信息
+- PDF 页图可补充视觉语义
+- DOCX 内嵌图片可补充视觉语义
 
-但不会调用真实大模型，也不会依赖真实本地 Embedding / Reranker 模型。
+VLM 当前走 OpenAI-compatible `chat/completions` 接口。
 
-### 如何开启
+## Demo Mode
 
-在 `.env` 中设置：
+适合以下场景：
+
+- 没有本地 embedding / reranker 模型
+- 没有可用的 LLM API Key
+- 只想给面试官演示链路
+
+启用方式：
 
 ```env
 DEMO_MODE=true
 ```
 
-### Demo 模式行为
+启用后：
 
-- Embedding：使用确定性伪向量，保证流程可运行
-- Reranker：直接保留当前排序结果
-- LLM：返回本地 mock 的结构化答案
+- Embedding 使用确定性伪向量
+- Reranker 不调用真实模型
+- LLM 返回本地 mock 的结构化结果
 
-### 是否影响正式模式
+## 环境要求
 
-不会。
+### 必需
 
-当：
+- Python `3.11`
+- Windows / Linux / macOS
 
-```env
-DEMO_MODE=false
+### OCR 必需
+
+- 已安装 `Tesseract OCR`
+- Windows 默认路径示例：
+
+```text
+C:\Program Files\Tesseract-OCR\tesseract.exe
 ```
 
-系统会恢复为正式模式：
+### 正式模式建议
 
-- 使用本地 Embedding 模型
-- 使用本地 Reranker 模型
-- 调用真实 DeepSeek API
-
-所以 `Demo 模式` 只是一个开关，不会破坏原有正式能力。
-
-## 仓库中不上传的内容
-
-以下内容不建议上传到 GitHub：
-
-- `.env`
-- `data/`
-- `logs/`
-- `models/`
-- `.idea/`
-- `__pycache__/`
-
-原因：
-
-- `.env` 可能包含真实密钥
-- `data/`、`logs/`、`models/` 属于本地运行数据或大文件
-- `models/` 体积较大，不适合普通 Git 仓库
-
-## 别人拿到仓库后能否运行
-
-可以，但分两种情况。
-
-### 1. 只想演示系统跑起来
-
-推荐直接使用 `Demo 模式`。
-
-只需要：
-
-1. 安装 Python 依赖
-2. 复制 `.env.example` 为 `.env`
-3. 设置 `DEMO_MODE=true`
-4. 启动服务
-
-这种方式不需要：
-
-- 本地 Embedding 模型
-- 本地 Reranker 模型
-- DeepSeek API Key
-
-### 2. 想运行完整正式能力
-
-需要额外准备：
-
-1. 本地 Embedding 模型目录
-2. 本地 Reranker 模型目录
-3. `LLM_API_KEY`
+- 本地 Embedding 模型目录
+- 本地 Reranker 模型目录
+- 可用的 `LLM_API_KEY`
 
 ## 快速开始
 
@@ -160,37 +131,54 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-### 3. 选择运行模式
+敏感密钥建议单独放到 `.secrets.env`，应用会自动同时加载 `.env` 和 `.secrets.env`。
 
-#### 方案 A：演示模式
+### 3. 修改 `.env`
 
-修改 `.env`：
+最少需要确认这些配置：
 
 ```env
-DEMO_MODE=true
+VECTOR_STORE_PROVIDER=chroma
+CHROMA_PERSIST_DIR=data/chroma
+
+ENABLE_OCR=true
+TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+
+EMBEDDING_MODEL=E:/lost/models/bge-small-zh-v1.5
+RERANK_MODEL=E:/lost/models/ms-marco-MiniLM-L-12-v2
+
 ```
 
-#### 方案 B：正式模式
-
-修改 `.env`：
+然后在 `.secrets.env` 中保存密钥：
 
 ```env
-DEMO_MODE=false
-LLM_API_KEY=your-deepseek-key
-EMBEDDING_MODEL=E:/your-project/models/bge-small-zh-v1.5
-RERANK_MODEL=E:/your-project/models/ms-marco-MiniLM-L-12-v2
+LLM_API_KEY=your-api-key
+VLM_API_KEY=your-api-key
+```
+
+如果暂时不想启用视觉语义补充：
+
+```env
+VLM_ENABLED=false
+```
+
+如果要启用：
+
+```env
+VLM_ENABLED=true
+VLM_MODEL=deepseek-vl2
 ```
 
 ### 4. 启动服务
 
 ```powershell
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python main.py
 ```
 
 或：
 
 ```powershell
-python main.py
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### 5. 打开接口文档
@@ -199,31 +187,110 @@ python main.py
 http://127.0.0.1:8000/docs
 ```
 
+### 6. 健康检查
+
+```text
+GET http://127.0.0.1:8000/api/v1/health
+```
+
+## 主要配置项
+
+### 基础
+
+```env
+APP_HOST=0.0.0.0
+APP_PORT=8000
+API_PREFIX=/api/v1
+```
+
+### 向量库
+
+```env
+VECTOR_STORE_PROVIDER=chroma
+CHROMA_PERSIST_DIR=data/chroma
+COLLECTION_NAME=enterprise_docs
+```
+
+### OCR
+
+```env
+ENABLE_OCR=true
+OCR_LANGUAGE=chi_sim+eng
+TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+```
+
+### VLM
+
+```env
+VLM_ENABLED=false
+VLM_API_BASE=https://api.deepseek.com/v1
+VLM_API_KEY=
+VLM_MODEL=deepseek-vl2
+VLM_TIMEOUT=120
+VLM_MAX_IMAGES_PER_DOCUMENT=3
+```
+
+### Chunk
+
+```env
+CHUNK_STRATEGY=semantic
+CHUNK_SIZE=800
+CHUNK_OVERLAP=150
+CHUNK_MIN_SIZE=200
+CHUNK_TITLE_BOOST=true
+```
+
+### Retrieval
+
+```env
+HYBRID_SEARCH_ENABLED=true
+VECTOR_TOP_K=20
+BM25_TOP_K=20
+FUSION_MODE=rrf
+RRF_K=60
+QUERY_REWRITE_ENABLED=true
+QUERY_REWRITE_MAX_QUERIES=3
+SECOND_PASS_ENABLED=true
+SECOND_PASS_TOP_K=30
+NEIGHBOR_EXPAND_ENABLED=true
+NEIGHBOR_EXPAND_WINDOW=1
+```
+
+### Rerank
+
+```env
+RERANK_ENABLED=true
+RERANK_INITIAL_K=50
+RERANK_FINAL_K=10
+RERANK_MODEL=E:/lost/models/ms-marco-MiniLM-L-12-v2
+```
+
 ## 常用接口
 
-### 健康检查
+### 1. 健康检查
 
 `GET /api/v1/health`
 
-### 上传文档
+### 2. 上传文档
 
 `POST /api/v1/upload`
 
 作用：
 
 - 保存文件
-- 解析文本
+- 文本抽取
+- OCR / VLM 增强
 - 清洗
-- 切块
+- 分块
 - 向量化
 - 写入 Chroma
 
-重复上传同一文件时：
+重复上传相同内容文件时：
 
-- 系统会基于 `SHA256` 识别重复文档
+- 系统会基于 `SHA256` 做文档级去重
 - 自动跳过重复索引
 
-### 查询问答
+### 3. 查询问答
 
 `POST /api/v1/query`
 
@@ -231,61 +298,59 @@ http://127.0.0.1:8000/docs
 
 ```json
 {
-  "query": "这个文档说了什么",
+  "query": "这个文档主要讲了什么？",
   "top_k": 10,
   "stream": false,
   "use_rerank": true
 }
 ```
 
-响应示例：
+响应中的 `data` 包含：
 
-```json
-{
-  "success": true,
-  "message": "ok",
-  "data": {
-    "answer": "结论：...\n\n关键要点：\n- ...\n- ...\n\n依据：[1][2]",
-    "conclusion": "这份文档主要介绍了某主题的核心内容。",
-    "key_points": [
-      "介绍了核心定义",
-      "介绍了流程",
-      "介绍了应用场景"
-    ],
-    "citations": [
-      {
-        "ref": "[1]",
-        "filename": "text.docx"
-      }
-    ],
-    "query": "这个文档说了什么",
-    "results": [],
-    "prompt": "..."
-  }
-}
-```
+- `answer`
+- `conclusion`
+- `key_points`
+- `citations`
+- `results`
+- `prompt`
 
-### 文档列表
+### 4. 文档列表
 
 `GET /api/v1/documents`
 
-### 删除文档
+### 5. 删除文档
 
 `DELETE /api/v1/documents/{document_id}`
 
-## 发布到 GitHub 的建议
+## 目录说明
 
-建议保留：
+```text
+app/
+  api/
+  models/
+  services/
+  utils/
+data/
+  chroma/
+  uploads/
+  tmp/
+models/
+logs/
+```
 
-- `app/`
-- `main.py`
-- `.env.example`
-- `README.md`
-- `requirements.txt`
-- `docker-compose.yml`
-- `Dockerfile`
+## 已验证能力
 
-建议忽略：
+当前版本已在本机验证：
+
+- 应用可正常启动
+- `/api/v1/health` 返回正常
+- `Chroma` 可初始化
+- `OCR` 可执行
+- 查询改写服务可正常加载
+
+## Git 建议忽略内容
+
+不建议上传：
 
 - `.env`
 - `data/`
@@ -294,29 +359,14 @@ http://127.0.0.1:8000/docs
 - `.idea/`
 - `__pycache__/`
 
-## 对企业的价值
-
-### 1. 提高知识检索效率
-
-- 把分散文档变成统一知识库
-- 降低人工翻文档时间
-- 提高内部答疑响应速度
-
-### 2. 降低大模型调用成本
-
-- 通过检索先缩小上下文范围
-- 通过上下文压缩减少无效文本
-- 有助于减少 token 消耗
-
-### 3. 降低幻觉风险
-
-- 回答基于检索片段
-- 输出支持引用来源
-- 比纯大模型裸问答更可控
-
 ## 简历可写点
 
-- 设计并实现企业级 RAG 知识库问答系统，支持多格式文档解析、混合检索、重排和结构化答案输出
-- 基于 `Chroma + BM25 + RRF + Reranker` 构建混合召回与精排链路，提升检索相关性
-- 实现文档去重、上下文压缩和结构化引用，降低重复索引、提升回答可追溯性
-- 设计 `Demo 模式`，降低项目演示门槛，提升非技术评审场景下的可交付性
+- 设计并实现基于 `FastAPI + Chroma + BM25 + Local Embedding + Cross-Encoder Reranker` 的知识库问答系统，支持多格式文档解析、OCR 增强和结构化回答输出。
+- 构建 `BM25 + 向量召回 + RRF/Weighted 融合 + Rerank` 的混合检索链路，并加入查询改写、低置信度二次检索和邻居 chunk 扩展以提升召回率与回答稳定性。
+- 基于文件 Hash 实现文档级去重，结合 embedding 缓存、上下文压缩和引用映射提升索引效率与回答可追溯性。
+
+## 当前限制
+
+- `VLM` 需要你提供兼容 OpenAI Chat Completions 的视觉模型接口
+- `OCR` 依赖本机安装的 `Tesseract OCR`
+- 当前评测体系、RAGAS、MRR、Hit@k 还没有实现

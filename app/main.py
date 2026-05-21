@@ -1,6 +1,7 @@
 import os
+import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
@@ -10,7 +11,7 @@ from app.utils.logger import setup_logger
 
 
 def create_app() -> FastAPI:
-    """创建并初始化 FastAPI 应用。"""
+    """Create and initialize the FastAPI application."""
 
     settings = get_settings()
     os.makedirs(settings.data_dir, exist_ok=True)
@@ -24,7 +25,7 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version="1.0.0",
         debug=settings.app_debug,
-        description="企业级 RAG 检索增强生成系统",
+        description="Enterprise RAG retrieval-augmented QA system",
     )
 
     app.add_middleware(
@@ -35,11 +36,38 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def access_log_middleware(request: Request, call_next):
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.perf_counter() - start) * 1000
+            logger.exception(
+                "Unhandled request error | method={} path={} client={} duration_ms={:.2f}",
+                request.method,
+                request.url.path,
+                request.client.host if request.client else "unknown",
+                duration_ms,
+            )
+            raise
+
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.bind(access_log=True).info(
+            "{} {} status={} client={} duration_ms={:.2f}",
+            request.method,
+            request.url.path,
+            response.status_code,
+            request.client.host if request.client else "unknown",
+            duration_ms,
+        )
+        return response
+
     app.include_router(router, prefix=settings.api_prefix)
 
     @app.on_event("startup")
     async def on_startup() -> None:
-        logger.info("应用启动成功: {}:{}{}", settings.app_host, settings.app_port, settings.api_prefix)
+        logger.info("Application started: {}:{}{}", settings.app_host, settings.app_port, settings.api_prefix)
 
     return app
 
